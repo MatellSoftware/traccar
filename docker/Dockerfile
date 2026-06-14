@@ -8,8 +8,10 @@
 # Stage 1: build the web bundle (React + Vite)
 FROM node:20-alpine AS web
 WORKDIR /web
-# traccar-web is the submodule directory inside the traccar fork checkout
-COPY traccar-web/package*.json ./
+# traccar-web is the submodule directory inside the traccar fork checkout.
+# .npmrc carries the project's npm policy (legacy-peer-deps) and must be present
+# for `npm ci` to resolve a tree matching the lockfile.
+COPY traccar-web/package*.json traccar-web/.npmrc ./
 RUN npm ci
 COPY traccar-web/ ./
 # Branding assets (logo, favicon, etc.) are overlaid before build so they are
