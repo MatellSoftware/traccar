@@ -1,0 +1,74 @@
+name: build-and-push
+
+# Builds the custom Traccar image from YOUR fork and pushes it to ACR.
+# NOTE: This workflow is intended to live in your `your-org/traccar` FORK
+# (which contains the traccar-web submodule), since the build needs the source.
+# The Dockerfile + branding/ can be vendored in via this infra repo or committed
+# to the fork. Adjust `context`/`file` paths to match where you keep them.
+
+on:
+  push:
+    branches: [ custom/main ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Optional image tag (defaults to git SHA)'
+        required: false
+
+permissions:
+  id-token: write      # required for Azure OIDC login
+  contents: read
+
+env:
+  IMAGE_NAME: traccar
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve ACR login server
+        id: acr
+        run: echo "login_server=${{ secrets.ACR_LOGIN_SERVER }}" >> "$GITHUB_OUTPUT"
+
+      - name: ACR login
+        run: az acr login --name "${{ secrets.ACR_NAME }}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute tag
+        id: meta
+        run: echo "tag=${{ github.event.inputs.tag || github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile      # adjust if vendored elsewhere
+          push: true
+          tags: |
+            ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger deploy
+        if: success()
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          repository: MatellSoftware/traccar-infra
+          event-type: deploy-image
+          client-payload: '{"tag": "${{ steps.meta.outputs.tag }}"}'

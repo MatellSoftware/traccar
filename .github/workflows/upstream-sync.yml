@@ -1,0 +1,62 @@
+name: upstream-sync
+
+# Weekly: pull upstream Traccar into your fork and open a review PR into custom/main.
+# NOTE: lives in your `your-org/traccar` FORK (and similarly for traccar-web).
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name  "upstream-sync-bot"
+          git config user.email "bot@users.noreply.github.com"
+
+      - name: Add upstream & fetch
+        run: |
+          git remote add upstream https://github.com/traccar/traccar.git || true
+          git fetch upstream --tags
+
+      - name: Fast-forward master mirror
+        run: |
+          git checkout master
+          git merge --ff-only upstream/master || echo "master diverged — review manually"
+          git push origin master || true
+
+      - name: Create merge branch into custom/main
+        id: branch
+        run: |
+          BR="sync/upstream-$(date +%Y%m%d)"
+          git checkout custom/main
+          git checkout -b "$BR"
+          # Merge upstream; conflicts are left in the tree for the PR author to resolve
+          git merge --no-edit upstream/master || true
+          git push origin "$BR"
+          echo "branch=$BR" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          base: custom/main
+          branch: ${{ steps.branch.outputs.branch }}
+          title: "Upstream sync: merge traccar/traccar master"
+          body: |
+            Automated weekly sync of upstream Traccar into `custom/main`.
+
+            - Review the diff against our customisations.
+            - Resolve any conflicts (look for `<<<<<<<` markers).
+            - Merging triggers the normal build + deploy pipeline.
